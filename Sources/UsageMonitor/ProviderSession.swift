@@ -69,9 +69,9 @@ final class ProviderSession: NSObject, WKNavigationDelegate, NSWindowDelegate {
     /// Navigate to the provider origin (using stored cookies) then run a
     /// same-origin fetch of `path`, returning the raw response body.
     func fetchJSON(path: String, extraHeaders: [String: String] = [:]) async throws -> String {
-        Log.write("[\(provider.rawValue)] fetchJSON \(path) — ensuring \(provider.baseURL.absoluteString) loaded (current=\(webView.url?.absoluteString ?? "nil"))")
+        Log.write("[\(provider.rawValue)] request started")
         try await ensureLoaded(provider.baseURL)
-        Log.write("[\(provider.rawValue)] loaded, now at \(webView.url?.absoluteString ?? "nil")")
+        Log.write("[\(provider.rawValue)] provider origin loaded")
 
         // Return a plain JS object so WebKit bridges it to an NSDictionary.
         let js = """
@@ -90,21 +90,16 @@ final class ProviderSession: NSObject, WKNavigationDelegate, NSWindowDelegate {
             arguments: ["path": path, "headers": extraHeaders],
             contentWorld: .defaultClient)
 
-        // Decided up front so *every* log path below honours it.
-        let isSensitive = path.contains("auth/session") || path.contains("oauth")
-
         guard let dict = result as? [String: Any],
               let status = (dict["status"] as? NSNumber)?.intValue,
               let body = dict["body"] as? String else {
-            Log.write("[\(provider.rawValue)] BAD JS result: "
-                      + (isSensitive ? "[redacted]" : String(describing: result)))
+            // The raw result carries the response body — and therefore possibly
+            // the access token — so it is never written out.
+            Log.write("[\(provider.rawValue)] BAD JS result [content omitted]")
             throw ProviderError.badResponse("unexpected JS result")
         }
-        if isSensitive {
-            Log.write("[\(provider.rawValue)] HTTP \(status), body \(body.count) bytes [redacted]")
-        } else {
-            Log.write("[\(provider.rawValue)] HTTP \(status), body \(body.count) bytes: \(body.prefix(160))")
-        }
+        // Never log authenticated response bodies, endpoint identifiers, or URLs.
+        Log.write("[\(provider.rawValue)] HTTP \(status), body \(body.utf8.count) bytes [content omitted]")
         if status == 401 || status == 403 {
             throw ProviderError.notAuthenticated
         }

@@ -25,7 +25,7 @@ Both platforms use the same trick:
 | Persistent cookies | `WKWebsiteDataStore.default()` | WebView2 `UserDataFolder` |
 | Run JS, get result | `callAsyncJavaScript` | `ExecuteScriptAsync` + `postMessage` |
 | Tray UI | `MenuBarExtra` | `NotifyIcon` |
-| Log file | `~/Library/Logs/UsageMonitor/` (0600) | `%LOCALAPPDATA%\UsageMonitor\` |
+| Log file | `~/Library/Logs/UsageMonitor/usagemonitor.log` (0600) | `%LOCALAPPDATA%\UsageMonitor\usagemonitor.log` |
 
 ## Build & run
 
