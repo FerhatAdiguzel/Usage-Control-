@@ -12,6 +12,9 @@ enum Log {
             at: directory,
             withIntermediateDirectories: true,
             attributes: [.posixPermissions: 0o700])
+        try? fileManager.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: directory.path)
 
         let file = directory.appendingPathComponent("usagemonitor.log")
         if !fileManager.fileExists(atPath: file.path) {
