@@ -1,0 +1,102 @@
+# Usage Monitor
+
+A personal menu-bar / system-tray app that shows remaining usage for
+**Claude Pro** and **ChatGPT Plus / Codex**.
+
+- **macOS** — Swift + SwiftUI (`MenuBarExtra` + `WKWebView`) — *built and working*
+- **Windows** — C# + WinForms (`NotifyIcon` + `WebView2`) — *compiles; not yet run on real hardware*
+
+Personal use only — it reads your own logged-in sessions. It is **not** built for
+distribution (it relies on unofficial internal endpoints and your own cookies).
+
+## How it works
+
+Both platforms use the same trick:
+
+1. You **log in once** in an embedded browser window (you type the password, never the app).
+2. Cookies persist in the app's own browser profile.
+3. Usage is fetched silently by running `fetch()` *inside* the authenticated page,
+   so every request is same-origin and correctly signed.
+4. A timer auto-refreshes (5 / 10 / 30 / 60 min).
+
+| Concern | macOS | Windows |
+|---|---|---|
+| Embedded browser | `WKWebView` | `WebView2` |
+| Persistent cookies | `WKWebsiteDataStore.default()` | WebView2 `UserDataFolder` |
+| Run JS, get result | `callAsyncJavaScript` | `ExecuteScriptAsync` + `postMessage` |
+| Tray UI | `MenuBarExtra` | `NotifyIcon` |
+| Log file | `/tmp/usagemonitor.log` | `%LOCALAPPDATA%\UsageMonitor\usagemonitor.log` |
+
+## Build & run
+
+### macOS
+```bash
+./scripts/make_app.sh release
+open build/UsageMonitor.app
+```
+Development: `swift build && swift run`
+
+### Windows
+```powershell
+cd windows
+dotnet build -c Release
+dotnet run -c Release
+```
+Requires the **WebView2 runtime** (preinstalled on Windows 11; on Windows 10 grab
+the Evergreen runtime from Microsoft).
+
+## Status
+
+| Piece | macOS | Windows |
+|-------|-------|---------|
+| Tray/menu UI, rows, auto-refresh | ✅ | ✅ (compiles) |
+| Persistent login via embedded browser | ✅ | ✅ (compiles) |
+| **ChatGPT / Codex real usage** | ✅ **working** | ✅ (same logic, untested) |
+| **Claude Pro real usage** | ⏳ endpoint not yet mapped | ⏳ same |
+
+## Endpoints
+
+All endpoint/parsing logic is isolated in **one file per platform**:
+`Sources/UsageMonitor/Providers.swift` and `windows/Providers.cs`.
+
+### ChatGPT / Codex — verified
+`/backend-api/*` rejects cookies alone (401). The web app first reads a bearer
+token, then calls the Codex ("wham") usage endpoint:
+
+1. `GET /api/auth/session` → `{ "accessToken": "..." }`
+2. `GET /backend-api/wham/usage` with `Authorization: Bearer <token>`
+
+Response shape:
+```jsonc
+{
+  "plan_type": "plus",
+  "rate_limit": {
+    "primary_window":   { "used_percent": 0, "limit_window_seconds": 604800,
+                          "reset_at": 1785086891 },
+    "secondary_window": null   // the 5-hour window, once there's recent activity
+  },
+  "credits": { "has_credits": false, "balance": "0" }
+}
+```
+`limit_window_seconds`: `18000` = 5-hour, `604800` = weekly.
+
+### Claude — not yet mapped
+`/api/organizations` gives the org id, but the endpoint feeding the usage
+indicator still needs to be captured from claude.ai's own network traffic
+(DevTools → Network → find the request whose response holds the usage numbers).
+
+## Discovering endpoints
+
+1. Open the site logged-in, DevTools → **Network** → filter **Fetch/XHR**.
+2. Open the surface that displays usage; find the request whose **Response**
+   contains the real numbers (not a `pageConfigs`-style feature flag).
+3. Map its fields onto `UsageSnapshot` in the platform's `Providers` file.
+
+Everything downstream (UI, colors, refresh) consumes `UsageSnapshot`, so only
+that one file changes.
+
+## Security note
+
+The app holds live session cookies and (for ChatGPT) an access token. The
+loggers deliberately **never** write auth response bodies — only status codes
+and byte counts. Keep it that way.
