@@ -1,20 +1,45 @@
 import Foundation
 
-/// Minimal file logger so we can diagnose fetches without a visible console.
-/// Tail with:  tail -f /tmp/usagemonitor.log
+/// Minimal private file logger so we can diagnose fetches without a visible console.
 enum Log {
-    static let path = "/tmp/usagemonitor.log"
+    private static let url: URL = {
+        let fileManager = FileManager.default
+        let directory = fileManager
+            .urls(for: .libraryDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Logs/UsageMonitor", isDirectory: true)
+
+        try? fileManager.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700])
+
+        let file = directory.appendingPathComponent("usagemonitor.log")
+        if !fileManager.fileExists(atPath: file.path) {
+            fileManager.createFile(
+                atPath: file.path,
+                contents: nil,
+                attributes: [.posixPermissions: 0o600])
+        }
+        try? fileManager.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: file.path)
+        return file
+    }()
+
+    static var path: String { url.path }
 
     static func write(_ message: String) {
         let line = "\(Self.stamp())  \(message)\n"
-        if let data = line.data(using: .utf8) {
-            if let handle = FileHandle(forWritingAtPath: path) {
-                handle.seekToEndOfFile()
-                handle.write(data)
-                try? handle.close()
-            } else {
-                try? data.write(to: URL(fileURLWithPath: path))
-            }
+        guard let data = line.data(using: .utf8),
+              let handle = try? FileHandle(forWritingTo: url) else {
+            return
+        }
+        defer { try? handle.close() }
+        do {
+            try handle.seekToEnd()
+            try handle.write(contentsOf: data)
+        } catch {
+            // Logging must never interrupt the application.
         }
     }
 

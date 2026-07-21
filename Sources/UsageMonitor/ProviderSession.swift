@@ -69,9 +69,9 @@ final class ProviderSession: NSObject, WKNavigationDelegate, NSWindowDelegate {
     /// Navigate to the provider origin (using stored cookies) then run a
     /// same-origin fetch of `path`, returning the raw response body.
     func fetchJSON(path: String, extraHeaders: [String: String] = [:]) async throws -> String {
-        Log.write("[\(provider.rawValue)] fetchJSON \(path) — ensuring \(provider.baseURL.absoluteString) loaded (current=\(webView.url?.absoluteString ?? "nil"))")
+        Log.write("[\(provider.rawValue)] request started")
         try await ensureLoaded(provider.baseURL)
-        Log.write("[\(provider.rawValue)] loaded, now at \(webView.url?.absoluteString ?? "nil")")
+        Log.write("[\(provider.rawValue)] provider origin loaded")
 
         // Return a plain JS object so WebKit bridges it to an NSDictionary.
         let js = """
@@ -93,12 +93,8 @@ final class ProviderSession: NSObject, WKNavigationDelegate, NSWindowDelegate {
             Log.write("[\(provider.rawValue)] BAD JS result: \(String(describing: result))")
             throw ProviderError.badResponse("unexpected JS result")
         }
-        // Never log auth payloads — that response carries the access token.
-        if path.contains("auth/session") || path.contains("oauth") {
-            Log.write("[\(provider.rawValue)] HTTP \(status), body \(body.count) bytes [redacted]")
-        } else {
-            Log.write("[\(provider.rawValue)] HTTP \(status), body \(body.count) bytes: \(body.prefix(160))")
-        }
+        // Never log authenticated response bodies, endpoint identifiers, or URLs.
+        Log.write("[\(provider.rawValue)] HTTP \(status), body \(body.utf8.count) bytes [content omitted]")
         if status == 401 || status == 403 {
             throw ProviderError.notAuthenticated
         }
