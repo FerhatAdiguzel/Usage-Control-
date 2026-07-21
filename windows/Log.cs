@@ -12,6 +12,8 @@ public static class Log
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "UsageMonitor", "usagemonitor.log");
 
+    private const long MaxBytes = 512 * 1024;
+
     public static void Write(string message)
     {
         try
@@ -19,6 +21,11 @@ public static class Log
             lock (Gate)
             {
                 Directory.CreateDirectory(System.IO.Path.GetDirectoryName(Path)!);
+
+                // Keep the log bounded rather than growing without limit.
+                var info = new FileInfo(Path);
+                if (info.Exists && info.Length > MaxBytes) File.WriteAllText(Path, "");
+
                 File.AppendAllText(Path, $"{DateTime.Now:HH:mm:ss}  {message}{Environment.NewLine}");
             }
         }

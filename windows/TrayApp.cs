@@ -111,7 +111,13 @@ public sealed class TrayAppContext : ApplicationContext
 
             var login = new ToolStripMenuItem("   Log in…");
             var captured = p;
-            login.Click += (_, _) => _sessions[captured].ShowLogin();
+            login.Click += async (_, _) =>
+            {
+                // Awaited with a guard: an unobserved exception here would
+                // otherwise tear down the process.
+                try { await _sessions[captured].ShowLoginAsync(); }
+                catch (Exception ex) { Log.Write($"login({captured}) ERROR: {ex.Message}"); }
+            };
             menu.Items.Add(login);
             menu.Items.Add(new ToolStripSeparator());
         }

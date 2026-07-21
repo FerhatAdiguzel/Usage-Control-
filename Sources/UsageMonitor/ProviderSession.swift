@@ -82,19 +82,25 @@ final class ProviderSession: NSObject, WKNavigationDelegate, NSWindowDelegate {
         const body = await resp.text();
         return { status: resp.status, body: body };
         """
+        // `.defaultClient` is an isolated content world: page scripts cannot
+        // read our arguments (which carry the bearer token) or hook the fetch
+        // we call. Cookies still apply — this is still a same-origin request.
         let result = try await webView.callAsyncJavaScript(
             js,
             arguments: ["path": path, "headers": extraHeaders],
-            contentWorld: .page)
+            contentWorld: .defaultClient)
+
+        // Decided up front so *every* log path below honours it.
+        let isSensitive = path.contains("auth/session") || path.contains("oauth")
 
         guard let dict = result as? [String: Any],
               let status = (dict["status"] as? NSNumber)?.intValue,
               let body = dict["body"] as? String else {
-            Log.write("[\(provider.rawValue)] BAD JS result: \(String(describing: result))")
+            Log.write("[\(provider.rawValue)] BAD JS result: "
+                      + (isSensitive ? "[redacted]" : String(describing: result)))
             throw ProviderError.badResponse("unexpected JS result")
         }
-        // Never log auth payloads — that response carries the access token.
-        if path.contains("auth/session") || path.contains("oauth") {
+        if isSensitive {
             Log.write("[\(provider.rawValue)] HTTP \(status), body \(body.count) bytes [redacted]")
         } else {
             Log.write("[\(provider.rawValue)] HTTP \(status), body \(body.count) bytes: \(body.prefix(160))")

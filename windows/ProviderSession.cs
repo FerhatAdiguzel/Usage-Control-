@@ -61,7 +61,7 @@ public sealed class ProviderSession : IDisposable
 
     // MARK: - Login
 
-    public async void ShowLogin()
+    public async Task ShowLoginAsync()
     {
         await EnsureInitializedAsync();
         _web.CoreWebView2.Navigate(Provider.LoginUrl());
@@ -87,19 +87,25 @@ public sealed class ProviderSession : IDisposable
             extraHeaders ?? new Dictionary<string, string>());
         var pathJson = JsonSerializer.Serialize(path);
 
+        // A per-call nonce lets us reject unsolicited postMessage traffic from
+        // the page, which would otherwise be accepted as our fetch result.
+        var nonce = Guid.NewGuid().ToString("N");
+        var nonceJson = JsonSerializer.Serialize(nonce);
+
         var js = $$"""
         (async () => {
+          const n = {{nonceJson}};
           try {
             const r = await fetch({{pathJson}}, { credentials: 'include', headers: {{headersJson}} });
             const b = await r.text();
-            window.chrome.webview.postMessage(JSON.stringify({ status: r.status, body: b }));
+            window.chrome.webview.postMessage(JSON.stringify({ nonce: n, status: r.status, body: b }));
           } catch (e) {
-            window.chrome.webview.postMessage(JSON.stringify({ status: -1, body: String(e) }));
+            window.chrome.webview.postMessage(JSON.stringify({ nonce: n, status: -1, body: String(e) }));
           }
         })();
         """;
 
-        var raw = await RunAndAwaitMessageAsync(js, TimeSpan.FromSeconds(30));
+        var raw = await RunAndAwaitMessageAsync(js, nonce, TimeSpan.FromSeconds(30));
 
         using var doc = JsonDocument.Parse(raw);
         var status = doc.RootElement.GetProperty("status").GetInt32();
@@ -116,15 +122,35 @@ public sealed class ProviderSession : IDisposable
     /// WebView2's ExecuteScriptAsync does not await promises, so the script
     /// posts its result back via window.chrome.webview.postMessage instead.
     /// </summary>
-    private async Task<string> RunAndAwaitMessageAsync(string js, TimeSpan timeout)
+    private async Task<string> RunAndAwaitMessageAsync(string js, string nonce, TimeSpan timeout)
     {
         var tcs = new TaskCompletionSource<string>(
             TaskCreationOptions.RunContinuationsAsynchronously);
+        var expectedHost = new Uri(Provider.BaseUrl()).Host;
 
         void Handler(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
         {
-            try { tcs.TrySetResult(e.TryGetWebMessageAsString()); }
-            catch (Exception ex) { tcs.TrySetException(ex); }
+            try
+            {
+                // Only accept messages from the provider origin...
+                if (!Uri.TryCreate(e.Source, UriKind.Absolute, out var src)
+                    || !string.Equals(src.Host, expectedHost, StringComparison.OrdinalIgnoreCase))
+                    return;
+
+                var raw = e.TryGetWebMessageAsString();
+                using var doc = JsonDocument.Parse(raw);
+
+                // ...and only the reply carrying this call's nonce.
+                if (!doc.RootElement.TryGetProperty("nonce", out var n)
+                    || !string.Equals(n.GetString(), nonce, StringComparison.Ordinal))
+                    return;
+
+                tcs.TrySetResult(raw);
+            }
+            catch
+            {
+                // Malformed chatter from the page — ignore, let the timeout rule.
+            }
         }
 
         _web.CoreWebView2.WebMessageReceived += Handler;

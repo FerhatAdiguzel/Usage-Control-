@@ -25,7 +25,7 @@ Both platforms use the same trick:
 | Persistent cookies | `WKWebsiteDataStore.default()` | WebView2 `UserDataFolder` |
 | Run JS, get result | `callAsyncJavaScript` | `ExecuteScriptAsync` + `postMessage` |
 | Tray UI | `MenuBarExtra` | `NotifyIcon` |
-| Log file | `/tmp/usagemonitor.log` | `%LOCALAPPDATA%\UsageMonitor\usagemonitor.log` |
+| Log file | `~/Library/Logs/UsageMonitor/` (0600) | `%LOCALAPPDATA%\UsageMonitor\` |
 
 ## Build & run
 
@@ -115,8 +115,27 @@ Two gotchas worth knowing:
 Everything downstream (UI, colors, refresh) consumes `UsageSnapshot`, so only
 that one file changes.
 
-## Security note
+## Security notes
 
-The app holds live session cookies and (for ChatGPT) an access token. The
-loggers deliberately **never** write auth response bodies — only status codes
-and byte counts. Keep it that way.
+The app holds live session cookies and (for ChatGPT) a bearer access token, so
+a few things are deliberate and should stay that way:
+
+- **Injected JS runs in an isolated content world** (`.defaultClient` on macOS).
+  Page scripts cannot read the arguments we pass in — which include the bearer
+  token — or hook the `fetch` we call. Never switch this back to `.page`.
+- **Auth responses are never logged.** The redaction decision is made *before*
+  any log statement, including the malformed-result branch, so there is no path
+  that writes the token to disk.
+- **The log lives in a user-private directory** (`0700` dir, `0600` file), not
+  `/tmp`. `/tmp` is world-writable — a pre-planted symlink would have redirected
+  our appends to an arbitrary user-owned file — and world-readable, while the
+  log contains account emails. It is also size-capped.
+- **The Windows JS→native channel is authenticated** with a per-call nonce plus
+  an origin check, so unsolicited `postMessage` traffic from the page cannot be
+  accepted as a fetch result.
+
+Residual risks, accepted by design: the embedded browser profile stores
+long-lived auth cookies on disk (same posture as a real browser profile), and
+the log retains account emails — both readable by anything already running as
+your user. WebView2 has no true isolated-world equivalent, so the Windows nonce
+reduces but does not fully eliminate a compromised-page spoofing scenario.
