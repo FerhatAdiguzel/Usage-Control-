@@ -25,25 +25,107 @@ enum UsageFetcher {
             throw ProviderError.parsing("no organization found")
         }
 
-        // 2) Ask for usage/limits on that org.
-        //    Endpoint verified from claude.ai network traffic; update here if it moves.
-        let body = try await session.fetchJSON(path: "/api/bootstrap/\(orgID)/statsig")
+        // 2) Usage windows for that org. Verified from claude.ai traffic:
+        //    { "five_hour": { "utilization": 0-100, "resets_at": ISO8601 }, "seven_day": {...} }
+        let body = try await session.fetchJSON(path: "/api/organizations/\(orgID)/usage")
         return try parseClaude(body)
     }
 
     static func parseClaude(_ body: String) throws -> UsageSnapshot {
-        // Defensive parse: dig for anything usage-shaped so a schema tweak
-        // degrades to "connected" rather than crashing.
-        guard let json = try? JSONSerialization.jsonObject(with: Data(body.utf8)) else {
+        guard let root = try? JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any] else {
             throw ProviderError.parsing("invalid JSON")
         }
-        let details = ["Raw payload received (\(body.count) bytes).",
-                       "Usage field mapping pending endpoint verification."]
-        _ = json
+
+        // Any top-level object carrying "utilization" is a rate-limit window, so
+        // model-specific windows show up without code changes. `extra_usage` is
+        // excluded deliberately: it's a spend meter, not a window, and would
+        // otherwise hijack the headline.
+        var windows: [Window] = []
+        for (key, value) in root where key != "extra_usage" {
+            guard let w = value as? [String: Any],
+                  let util = (w["utilization"] as? NSNumber)?.doubleValue else { continue }
+            let resetAt = (w["resets_at"] as? String).flatMap(parseISODate)
+            windows.append(Window(label: claudeWindowLabel(key), usedPercent: util, resetAt: resetAt))
+        }
+        guard !windows.isEmpty else {
+            throw ProviderError.parsing("no usage windows in response")
+        }
+        windows.sort { claudeRank($0.label) < claudeRank($1.label) }
+
+        // Headline reflects the most-consumed window (the binding constraint).
+        let main = windows.max { $0.usedPercent < $1.usedPercent }!
+        let relative = RelativeDateTimeFormatter()
+        var details = windows.map { w -> String in
+            let pct = Int(w.usedPercent.rounded())
+            if let r = w.resetAt {
+                return "\(w.label): \(pct)% used · resets \(relative.localizedString(for: r, relativeTo: .now))"
+            }
+            return "\(w.label): \(pct)% used"
+        }
+
+        // Pay-as-you-go credits that kick in past the plan limits.
+        if let extra = root["extra_usage"] as? [String: Any],
+           (extra["is_enabled"] as? Bool) == true,
+           let util = (extra["utilization"] as? NSNumber)?.doubleValue {
+            let places = (extra["decimal_places"] as? NSNumber)?.intValue ?? 2
+            let divisor = pow(10.0, Double(places))
+            let used = ((extra["used_credits"] as? NSNumber)?.doubleValue ?? 0) / divisor
+            let limit = ((extra["monthly_limit"] as? NSNumber)?.doubleValue ?? 0) / divisor
+            let code = (extra["currency"] as? String) ?? "USD"
+            details.append(String(format: "Extra credits: %d%% used (%@ of %@)",
+                                  Int(util.rounded()),
+                                  money(used, code), money(limit, code)))
+        }
+
         return UsageSnapshot(provider: .claude,
-                             headline: "Connected",
-                             fractionUsed: nil, resetsAt: nil,
+                             headline: "\(Int(main.usedPercent.rounded()))% used · \(main.label)",
+                             fractionUsed: main.usedPercent / 100.0,
+                             resetsAt: main.resetAt,
                              details: details, updatedAt: .now)
+    }
+
+    private static func money(_ amount: Double, _ code: String) -> String {
+        let f = NumberFormatter()
+        f.numberStyle = .currency
+        f.currencyCode = code
+        return f.string(from: NSNumber(value: amount)) ?? String(format: "%.2f %@", amount, code)
+    }
+
+    private static func claudeWindowLabel(_ key: String) -> String {
+        switch key {
+        case "five_hour": return "5-hour"
+        case "seven_day": return "Weekly"
+        case "seven_day_opus": return "Weekly (Opus)"
+        default:
+            return key.replacingOccurrences(of: "_", with: " ").capitalized
+        }
+    }
+
+    private static func claudeRank(_ label: String) -> Int {
+        switch label {
+        case "5-hour": return 0
+        case "Weekly": return 1
+        case "Weekly (Opus)": return 2
+        default: return 3
+        }
+    }
+
+    /// claude.ai emits 6-digit fractional seconds, which the strict parser rejects.
+    private static func parseISODate(_ s: String) -> Date? {
+        let withFrac = ISO8601DateFormatter()
+        withFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let d = withFrac.date(from: s) { return d }
+
+        let plain = ISO8601DateFormatter()
+        plain.formatOptions = [.withInternetDateTime]
+        if let d = plain.date(from: s) { return d }
+
+        if let frac = s.range(of: #"\.\d+"#, options: .regularExpression) {
+            var trimmed = s
+            trimmed.removeSubrange(frac)
+            return plain.date(from: trimmed)
+        }
+        return nil
     }
 
     // MARK: - ChatGPT / Codex

@@ -127,16 +127,100 @@ public static class UsageFetcher
         if (string.IsNullOrEmpty(orgId))
             throw new InvalidOperationException("no organization found");
 
-        // 2) Usage endpoint — pending verification, same as the macOS build.
-        var body = await session.FetchJsonAsync($"/api/bootstrap/{orgId}/statsig");
-        return new UsageSnapshot(
-            ProviderId.Claude, "Connected", null, null,
-            new[]
+        // 2) Usage windows. Verified from claude.ai traffic:
+        //    { "five_hour": { "utilization": 0-100, "resets_at": ISO8601 }, "seven_day": {...} }
+        var body = await session.FetchJsonAsync($"/api/organizations/{orgId}/usage");
+        return ParseClaude(body);
+    }
+
+    public static UsageSnapshot ParseClaude(string body)
+    {
+        using var doc = JsonDocument.Parse(body);
+        var root = doc.RootElement;
+
+        // Any top-level object carrying "utilization" is a rate-limit window.
+        // "extra_usage" is excluded deliberately: it's a spend meter, not a
+        // window, and would otherwise hijack the headline.
+        var windows = new List<Window>();
+        foreach (var prop in root.EnumerateObject())
+        {
+            if (prop.Name == "extra_usage") continue;
+            if (prop.Value.ValueKind != JsonValueKind.Object) continue;
+            if (!prop.Value.TryGetProperty("utilization", out var util)) continue;
+
+            DateTimeOffset? resetAt = null;
+            if (prop.Value.TryGetProperty("resets_at", out var ra)
+                && ra.ValueKind == JsonValueKind.String
+                && DateTimeOffset.TryParse(ra.GetString(), out var parsed))
             {
-                $"Raw payload received ({body.Length} bytes).",
-                "Usage field mapping pending endpoint verification."
-            },
+                resetAt = parsed;
+            }
+
+            windows.Add(new Window(ClaudeWindowLabel(prop.Name), util.GetDouble(), resetAt));
+        }
+
+        if (windows.Count == 0)
+            throw new InvalidOperationException("no usage windows in response");
+
+        windows = windows.OrderBy(w => ClaudeRank(w.Label)).ToList();
+        var main = windows.OrderByDescending(w => w.UsedPercent).First();
+
+        var details = windows
+            .Select(w =>
+            {
+                var pct = Math.Round(w.UsedPercent);
+                return w.ResetAt is { } r
+                    ? $"{w.Label}: {pct}% used · resets {Relative(r)}"
+                    : $"{w.Label}: {pct}% used";
+            })
+            .ToList();
+
+        // Pay-as-you-go credits that kick in past the plan limits.
+        if (root.TryGetProperty("extra_usage", out var extra)
+            && extra.ValueKind == JsonValueKind.Object
+            && extra.TryGetProperty("is_enabled", out var enabled)
+            && enabled.ValueKind == JsonValueKind.True
+            && extra.TryGetProperty("utilization", out var eUtil))
+        {
+            var places = extra.TryGetProperty("decimal_places", out var dp) ? dp.GetInt32() : 2;
+            var divisor = Math.Pow(10, places);
+            var used = (extra.TryGetProperty("used_credits", out var uc) ? uc.GetDouble() : 0) / divisor;
+            var limit = (extra.TryGetProperty("monthly_limit", out var ml) ? ml.GetDouble() : 0) / divisor;
+            var code = extra.TryGetProperty("currency", out var cur) ? cur.GetString() ?? "USD" : "USD";
+            details.Add(
+                $"Extra credits: {Math.Round(eUtil.GetDouble())}% used " +
+                $"({Money(used, code)} of {Money(limit, code)})");
+        }
+
+        return new UsageSnapshot(
+            ProviderId.Claude,
+            $"{Math.Round(main.UsedPercent)}% used · {main.Label}",
+            main.UsedPercent / 100.0,
+            main.ResetAt,
+            details,
             DateTimeOffset.Now);
+    }
+
+    private static string ClaudeWindowLabel(string key) => key switch
+    {
+        "five_hour" => "5-hour",
+        "seven_day" => "Weekly",
+        "seven_day_opus" => "Weekly (Opus)",
+        _ => Capitalize(key.Replace('_', ' '))
+    };
+
+    private static int ClaudeRank(string label) => label switch
+    {
+        "5-hour" => 0,
+        "Weekly" => 1,
+        "Weekly (Opus)" => 2,
+        _ => 3
+    };
+
+    private static string Money(double amount, string code)
+    {
+        try { return amount.ToString("C2", new System.Globalization.CultureInfo("en-US")); }
+        catch { return $"{amount:F2} {code}"; }
     }
 
     // MARK: - Helpers

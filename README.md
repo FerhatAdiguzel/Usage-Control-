@@ -52,7 +52,7 @@ the Evergreen runtime from Microsoft).
 | Tray/menu UI, rows, auto-refresh | ✅ | ✅ (compiles) |
 | Persistent login via embedded browser | ✅ | ✅ (compiles) |
 | **ChatGPT / Codex real usage** | ✅ **working** | ✅ (same logic, untested) |
-| **Claude Pro real usage** | ⏳ endpoint not yet mapped | ⏳ same |
+| **Claude Pro real usage** | ✅ **working** | ✅ (same logic, untested) |
 
 ## Endpoints
 
@@ -80,10 +80,30 @@ Response shape:
 ```
 `limit_window_seconds`: `18000` = 5-hour, `604800` = weekly.
 
-### Claude — not yet mapped
-`/api/organizations` gives the org id, but the endpoint feeding the usage
-indicator still needs to be captured from claude.ai's own network traffic
-(DevTools → Network → find the request whose response holds the usage numbers).
+### Claude — verified
+1. `GET /api/organizations` → `[{ "uuid": "<org-id>", ... }]`
+2. `GET /api/organizations/<org-id>/usage`
+
+Response shape:
+```jsonc
+{
+  "five_hour":  { "utilization": 5.0,  "resets_at": "2026-07-21T17:09:59.565625+00:00" },
+  "seven_day":  { "utilization": 33.0, "resets_at": "2026-07-23T22:59:59.565644+00:00" },
+  "seven_day_opus": null,        // model-specific windows, null when unused
+  "extra_usage": {               // NOT a rate-limit window — a spend meter
+    "is_enabled": true, "monthly_limit": 3000,
+    "used_credits": 2539.0, "utilization": 84.6, "decimal_places": 2
+  }
+}
+```
+
+Two gotchas worth knowing:
+- Any top-level object with a `utilization` field is treated as a window, so
+  model-specific windows appear automatically. **`extra_usage` is excluded on
+  purpose** — it's pay-as-you-go credit spend, and left in it would hijack the
+  headline (85% credits vs. the real 33% weekly limit).
+- `resets_at` uses **6-digit fractional seconds**, which `ISO8601DateFormatter`
+  rejects by default; the parser falls back to stripping them.
 
 ## Discovering endpoints
 
