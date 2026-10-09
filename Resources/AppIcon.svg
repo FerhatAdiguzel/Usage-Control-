@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#5B5BD6"/>
+      <stop offset="0.5" stop-color="#4338CA"/>
+      <stop offset="1" stop-color="#2B1C7A"/>
+    </linearGradient>
+    <linearGradient id="gloss" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.30"/>
+      <stop offset="0.45" stop-color="#ffffff" stop-opacity="0.04"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="arc" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#7DF9D0"/>
+      <stop offset="0.5" stop-color="#8FE3FF"/>
+      <stop offset="1" stop-color="#FFD86B"/>
+    </linearGradient>
+    <filter id="soft" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="18"/>
+    </filter>
+    <clipPath id="squircle">
+      <path d="M512 56c168 0 252 0 324 36 56 28 92 64 120 120 36 72 36 156 36 300s0 228-36 300c-28 56-64 92-120 120-72 36-156 36-324 36s-252 0-324-36c-56-28-92-64-120-120C32 740 32 656 32 512s0-228 36-300C96 156 132 120 188 92 260 56 344 56 512 56z"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#squircle)">
+    <rect width="1024" height="1024" fill="url(#bg)"/>
+    <rect width="1024" height="1024" fill="url(#gloss)"/>
+    <circle cx="512" cy="300" r="420" fill="#8B7BFF" opacity="0.22" filter="url(#soft)"/>
+  </g>
+
+  <!-- gauge track -->
+  <path d="M232 648 A280 280 0 1 1 792 648" fill="none" stroke="#ffffff" stroke-opacity="0.18" stroke-width="86" stroke-linecap="round"/>
+  <!-- gauge value arc (~72%) -->
+  <path d="M232 648 A280 280 0 0 1 735 477" fill="none" stroke="url(#arc)" stroke-width="86" stroke-linecap="round"/>
+
+  <!-- needle -->
+  <g transform="rotate(44 512 648)">
+    <path d="M512 648 L478 620 Q512 452 512 452 Q512 452 546 620 Z" fill="#ffffff"/>
+  </g>
+  <circle cx="512" cy="648" r="62" fill="#ffffff"/>
+  <circle cx="512" cy="648" r="26" fill="#3B2E9C"/>
+</svg>

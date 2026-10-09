@@ -20,9 +20,16 @@ mkdir -p "$APP_DIR/Contents/Resources"
 
 cp "$BUILD_DIR/$APP_NAME" "$APP_DIR/Contents/MacOS/$APP_NAME"
 cp "Resources/Info.plist" "$APP_DIR/Contents/Info.plist"
+cp "Resources/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
 
 # Ad-hoc sign so WebKit / keychain-backed cookie storage works locally.
 codesign --force --deep --sign - "$APP_DIR" >/dev/null 2>&1 || true
 
-echo "✅ Built $APP_DIR"
-echo "   Run with: open \"$APP_DIR\"   (or ./build/${APP_NAME}.app/Contents/MacOS/${APP_NAME})"
+# Tek kurulu kopya /Applications altında dursun; build/ sadece ara çıktı.
+INSTALL_DIR="/Applications/${APP_NAME}.app"
+rm -rf "$INSTALL_DIR"
+cp -R "$APP_DIR" "$INSTALL_DIR"
+rm -rf "$APP_DIR"
+
+echo "✅ Kuruldu: $INSTALL_DIR"
+echo "   Çalıştır: open \"$INSTALL_DIR\""
