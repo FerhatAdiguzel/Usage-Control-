@@ -14,6 +14,10 @@ final class UsageStore: ObservableObject {
 
     private var sessions: [ProviderID: ProviderSession] = [:]
     private var timer: Timer?
+    /// Providers with a refresh in flight. The timer, the toolbar button and a
+    /// closing login window can all fire at once; without this they piled up
+    /// (six concurrent fetches in one second, in the log).
+    private var inFlight: Set<ProviderID> = []
 
     init() {
         for p in ProviderID.allCases {
@@ -48,15 +52,29 @@ final class UsageStore: ObservableObject {
     }
 
     func refreshAllAsync() async {
+        guard !isRefreshing else { return }
         isRefreshing = true
         defer { isRefreshing = false }
-        for p in ProviderID.allCases {
-            await refresh(p)
+        // Providers are refreshed side by side: they own separate sessions, and
+        // running them in sequence meant one stalled provider also held up the
+        // other, leaving the whole menu stale.
+        let tasks = ProviderID.allCases.map { p in
+            Task { @MainActor [weak self] in await self?.refresh(p) }
+        }
+        for task in tasks {
+            await task.value
         }
     }
 
     func refresh(_ p: ProviderID) async {
         guard let session = sessions[p] else { return }
+        guard !inFlight.contains(p) else {
+            Log.write("refresh(\(p.rawValue)) skipped — already in flight")
+            return
+        }
+        inFlight.insert(p)
+        defer { inFlight.remove(p) }
+
         Log.write("refresh(\(p.rawValue)) start")
         do {
             let snap = try await UsageFetcher.fetch(p, using: session)
@@ -79,7 +97,11 @@ final class UsageStore: ObservableObject {
 
     /// Short status string for the menu bar title.
     var menuBarTitle: String {
-        let fractions = ProviderID.allCases.compactMap { snapshots[$0]?.fractionUsed }
+        let fractions = ProviderID.allCases.compactMap { p -> Double? in
+            // A provider that is erroring has no current reading, so its last
+            // good fraction must not keep standing in for the live number.
+            errors[p] == nil ? snapshots[p]?.fractionUsed : nil
+        }
         guard let worst = fractions.max() else { return "—" }
         return "\(Int(worst * 100))%"
     }

@@ -36,16 +36,28 @@ enum UsageFetcher {
             throw ProviderError.parsing("invalid JSON")
         }
 
-        // Any top-level object carrying "utilization" is a rate-limit window, so
-        // model-specific windows show up without code changes. `extra_usage` is
-        // excluded deliberately: it's a spend meter, not a window, and would
-        // otherwise hijack the headline.
+        // A rate-limit window is a top-level object carrying "utilization" whose
+        // key names a period, so model-specific windows (seven_day_opus and the
+        // like) show up without code changes. The key check is not cosmetic:
+        // the response also carries objects with a "utilization" field that are
+        // not windows at all — one of those, under a scrambled key, took over
+        // the headline and pinned it at a value that never moved. `extra_usage`
+        // is excluded for the same reason: it's a spend meter, not a window.
         var windows: [Window] = []
+        var skipped = 0
         for (key, value) in root where key != "extra_usage" {
             guard let w = value as? [String: Any],
                   let util = (w["utilization"] as? NSNumber)?.doubleValue else { continue }
+            guard isClaudeWindowKey(key) else {
+                skipped += 1
+                continue
+            }
             let resetAt = (w["resets_at"] as? String).flatMap(parseISODate)
             windows.append(Window(label: claudeWindowLabel(key), usedPercent: util, resetAt: resetAt))
+        }
+        if skipped > 0 {
+            // Key names come from the response body, so only the count is logged.
+            Log.write("[claude] ignored \(skipped) non-window object(s) with a utilization field")
         }
         guard !windows.isEmpty else {
             throw ProviderError.parsing("no usage windows in response")
@@ -89,6 +101,13 @@ enum UsageFetcher {
         f.numberStyle = .currency
         f.currencyCode = code
         return f.string(from: NSNumber(value: amount)) ?? String(format: "%.2f %@", amount, code)
+    }
+
+    /// True when the key names a time period, which is what every real usage
+    /// window does (five_hour, seven_day, seven_day_opus, ...).
+    private static func isClaudeWindowKey(_ key: String) -> Bool {
+        let k = key.lowercased()
+        return ["minute", "hour", "day", "week", "month"].contains { k.contains($0) }
     }
 
     private static func claudeWindowLabel(_ key: String) -> String {

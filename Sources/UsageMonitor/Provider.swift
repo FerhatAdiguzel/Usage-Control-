@@ -52,15 +52,24 @@ struct UsageSnapshot: Codable, Equatable {
 }
 
 enum ProviderError: LocalizedError {
+    /// The provider's own session endpoint gave us nothing to authenticate with.
     case notAuthenticated
+    /// HTTP 401 — a session exists but the provider rejected it.
+    case sessionExpired
+    /// HTTP 403 — the request was refused outright. On endpoints our cookies
+    /// should cover this points at a client/bot check, not a missing login, so
+    /// it must not be reported as "not logged in".
+    case forbidden
     case badResponse(String)
     case parsing(String)
 
     var errorDescription: String? {
         switch self {
         case .notAuthenticated: return "Not logged in"
+        case .sessionExpired:   return "Session expired (401) — log in again"
+        case .forbidden:        return "Request blocked (403) — log in again"
         case .badResponse(let s): return "Request failed: \(s)"
-        case .parsing(let s): return "Could not read usage: \(s)"
+        case .parsing(let s):   return "Could not read usage: \(s)"
         }
     }
 }
