@@ -47,14 +47,16 @@ enum Log {
         lock.lock()
         defer { lock.unlock() }
 
-        guard let handle = try? FileHandle(forWritingTo: url) else { return }
+        // forUpdating, not forWritingTo: trimming has to read the tail back,
+        // and a write-only descriptor fails that read with EBADF.
+        guard let handle = try? FileHandle(forUpdating: url) else { return }
         defer { try? handle.close() }
 
         do {
             // Keep the log bounded rather than growing without limit.
-            if try handle.seekToEnd() > maxBytes {
-                try handle.truncate(atOffset: 0)
-                try handle.seek(toOffset: 0)
+            let size = try handle.seekToEnd()
+            if size > maxBytes {
+                try trim(handle, from: size)
             }
             try handle.write(contentsOf: data)
         } catch {
@@ -66,6 +68,29 @@ enum Log {
     /// indistinguishable from the next day's, and the only clue that the log
     /// had crossed midnight was the clock appearing to run backwards. That
     /// made two failures days apart look like one simultaneous event.
+    /// Drops the oldest half of the log and keeps the newest.
+    ///
+    /// This used to truncate to zero, which threw away every entry the moment
+    /// the cap was reached. That is the opposite of what a diagnostic log is
+    /// for: the history needed to date the start of a failure was exactly what
+    /// got discarded. Leaves the handle at the end, ready to append.
+    private static func trim(_ handle: FileHandle, from size: UInt64) throws {
+        let keep = maxBytes / 2
+        try handle.seek(toOffset: size - keep)
+        var tail = try handle.readToEnd() ?? Data()
+        // The cut lands mid-line, so drop that partial first entry rather than
+        // leave a fragment that reads like a real one.
+        if let newline = tail.firstIndex(of: 0x0A) {
+            tail = Data(tail[(newline + 1)...])
+        }
+
+        try handle.truncate(atOffset: 0)
+        try handle.seek(toOffset: 0)
+        let marker = "\(stamp())  --- trimmed: earlier entries dropped ---\n"
+        try handle.write(contentsOf: Data(marker.utf8))
+        try handle.write(contentsOf: tail)
+    }
+
     private static func stamp() -> String {
         let f = DateFormatter()
         // Fixed locale so the stamp is stable whatever the user's region and
