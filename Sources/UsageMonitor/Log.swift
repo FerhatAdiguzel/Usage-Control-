@@ -62,9 +62,17 @@ enum Log {
         }
     }
 
+    /// Dated on purpose: with a time alone, an entry from one day was
+    /// indistinguishable from the next day's, and the only clue that the log
+    /// had crossed midnight was the clock appearing to run backwards. That
+    /// made two failures days apart look like one simultaneous event.
     private static func stamp() -> String {
         let f = DateFormatter()
-        f.dateFormat = "HH:mm:ss"
+        // Fixed locale so the stamp is stable whatever the user's region and
+        // calendar are set to.
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = .current
+        f.dateFormat = "yyyy-MM-dd HH:mm:ss"
         return f.string(from: Date())
     }
 }
