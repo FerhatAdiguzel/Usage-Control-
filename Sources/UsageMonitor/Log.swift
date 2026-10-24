@@ -8,7 +8,8 @@ import Foundation
 /// user's private Library/Logs directory, 0700 dir + 0600 file, and is capped.
 enum Log {
     private static let lock = NSLock()
-    private static let maxBytes: UInt64 = 512 * 1024
+    /// Not private: the rotation test asserts against this cap.
+    static let maxBytes: UInt64 = 512 * 1024
 
     private static let url: URL = {
         let fm = FileManager.default
@@ -74,7 +75,7 @@ enum Log {
     /// the cap was reached. That is the opposite of what a diagnostic log is
     /// for: the history needed to date the start of a failure was exactly what
     /// got discarded. Leaves the handle at the end, ready to append.
-    private static func trim(_ handle: FileHandle, from size: UInt64) throws {
+    static func trim(_ handle: FileHandle, from size: UInt64) throws {
         let keep = maxBytes / 2
         try handle.seek(toOffset: size - keep)
         var tail = try handle.readToEnd() ?? Data()
